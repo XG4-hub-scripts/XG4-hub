@@ -1,0 +1,1184 @@
+local redzlib = loadstring(game:HttpGet("https://raw.githubusercontent.com/tbao143/Library-ui/refs/heads/main/Redzhubui"))()
+
+local Window = redzlib:MakeWindow({
+    Title = "XG4 HUB SCRIPTS | 99 NIGHTS IN THE FOREST",
+    SubTitle = "by xg4 | V1.0",
+    SaveFolder = "xg4 ui lib.lua"
+})
+ 
+Window:AddMinimizeButton({
+    Button = { Image = "rbxassetid://1423080022", BackgroundTransparency = 0 },
+    Corner = { CornerRadius = UDim.new(0, 0) },
+})
+
+-- Tabs
+local Tab1 = Window:MakeTab({"Discord", "info"})
+local Tab2 = Window:MakeTab({"Farm", "Sword"})
+local Tab3 = Window:MakeTab({"Teleport", "map"})
+local Tab4 = Window:MakeTab({"Misc", "user"})
+local Tab5 = Window:MakeTab({"Bring", "home"})
+local Tab6 = Window:MakeTab({"Esp", "users"})
+local Tab7 = Window:MakeTab({"Hitbox", "box"})
+ 
+Tab1:AddDiscordInvite({
+    Name = "XG4 HUB COMMUNITY",
+    Description = "Join server",
+    Logo = "rbxassetid://1423080022",
+    Invite = "https://discord.gg/qKvrcrnW",
+})
+
+Tab2:AddSection({
+    Name = "Auto Farm Wood & You Are Steady | 1.0"
+})
+
+-- ==================== AUTO FARM ====================
+
+local Player = game.Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local RemoteEvents = nil
+local ProcessedTrees = {}
+local CurrentTargets = {}
+local AutoFarmEnabled = false
+local AutoFarmConnection = nil
+local TreesChopped = 0
+
+local MAX_FARM_RANGE = 100 -- القيمة الافتراضية للمدى
+local MULTI_ATTACK = 3      -- عدد هجمات متتابعة لكل شجرة
+local FARM_ATTACK_DELAY = 2
+local ValidTrees = {}       -- ضع هنا أسماء الأشجار الخاصة إذا كانت محددة
+
+-- ==================== Helper Functions ====================
+
+local function hasAxeForFarm()
+    local Inventory = Player:FindFirstChild("Inventory")
+    if Inventory then
+        for _, item in pairs(Inventory:GetChildren()) do
+            if item:IsA("Model") and (item.Name:find("Axe") or item.Name:find("axe")) then
+                return true, item
+            end
+        end
+    end
+    if Player.Character then
+        for _, item in pairs(Player.Character:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:find("Axe") or item.Name:find("axe")) then
+                return true, item
+            end
+        end
+    end
+    return false, nil
+end
+
+local function findAllTreesInRange()
+    local trees = {}
+    local Character = Player.Character
+    if not Character or not Character:FindFirstChild("HumanoidRootPart") then
+        return trees
+    end
+    local RootPart = Character.HumanoidRootPart
+
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Parent and not ProcessedTrees[obj] then
+            local name = obj.Name
+            if name:lower():find("tree") or ValidTrees[name] then
+                local trunk =
+                    obj:FindFirstChild("Trunk") or obj:FindFirstChild("Wood") or obj:FindFirstChild("Log") or
+                    obj:FindFirstChild("TreePart")
+
+                if not trunk then
+                    for _, part in pairs(obj:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            trunk = part
+                            break
+                        end
+                    end
+                end
+
+                if trunk and trunk:IsA("BasePart") then
+                    local distance = (RootPart.Position - trunk.Position).Magnitude
+                    if distance <= MAX_FARM_RANGE then
+                        table.insert(trees, { model = obj, trunk = trunk, name = name, distance = distance })
+                    end
+                end
+            end
+        end
+    end
+    return trees
+end
+
+local function attackTreeAsync(tree, axeTool, rootPart)
+    task.spawn(function()
+        for i = 1, MULTI_ATTACK do
+            if not tree.model.Parent then break end
+            pcall(function()
+                RemoteEvents:WaitForChild("ToolDamageObject"):InvokeServer(tree.model, axeTool, "1130340392", rootPart.CFrame)
+            end)
+            task.wait(0.05)
+        end
+        task.wait(0.5)
+        if not tree.model.Parent then
+            TreesChopped = TreesChopped + 1
+            ProcessedTrees[tree.model] = true
+        end
+    end)
+end
+
+local function attackAllTreesSimultaneously(trees, axeTool, rootPart)
+    if #trees > 0 then
+        local centerPos = Vector3.new(0, 0, 0)
+        for _, tree in ipairs(trees) do
+            centerPos = centerPos + tree.trunk.Position
+        end
+        centerPos = centerPos / #trees
+        local lookDir = (centerPos - rootPart.Position).Unit
+        rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + lookDir * Vector3.new(1, 0, 1))
+    end
+
+    for _, tree in ipairs(trees) do
+        attackTreeAsync(tree, axeTool, rootPart)
+    end
+end
+
+-- ==================== Auto Farm Toggle ====================
+Tab2:AddToggle({
+    Name = "Auto Farm Wood",
+    Default = false,
+    Callback = function(enabled)
+        AutoFarmEnabled = enabled
+
+        if enabled then
+            if not RemoteEvents then
+                pcall(function()
+                    RemoteEvents = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
+                end)
+            end
+            if not RemoteEvents then
+                AutoFarmEnabled = false
+                return
+            end
+
+            local hasAxeItem, axeTool = hasAxeForFarm()
+            if not hasAxeItem then
+                AutoFarmEnabled = false
+                return
+            end
+
+            ProcessedTrees = {}
+            TreesChopped = 0
+
+            AutoFarmConnection = RunService.Heartbeat:Connect(function()
+                if not AutoFarmEnabled then return end
+                local Character = Player.Character
+                if not Character then return end
+                local RootPart = Character:FindFirstChild("HumanoidRootPart")
+                if not RootPart then return end
+
+                local hasAxeItem, axeTool = hasAxeForFarm()
+                if not hasAxeItem then return end
+
+                local trees = findAllTreesInRange()
+                CurrentTargets = trees
+                if #trees == 0 then
+                    ProcessedTrees = {}
+                    return
+                end
+
+                attackAllTreesSimultaneously(trees, axeTool, RootPart)
+            end)
+        else
+            if AutoFarmConnection then
+                AutoFarmConnection:Disconnect()
+                AutoFarmConnection = nil
+            end
+            CurrentTargets = {}
+        end
+    end
+})
+
+-- ==================== Slider لتعديل المدى ====================
+Tab2:AddSlider({
+    Name = "Farm Wood Distance",
+    Default = MAX_FARM_RANGE,
+    Min = 100,
+    Max = 2500,
+    Increment = 1,
+    Callback = function(value)
+        MAX_FARM_RANGE = value
+    end
+})
+
+-- ==================== Update Farm Info Label ====================
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if farmInfoLabel then
+            local treeCount = #CurrentTargets
+            farmInfoLabel.Text = string.format("Trees: %d | Chopped: %d", treeCount, TreesChopped)
+        end
+    end
+end)
+
+Tab2:AddSection({
+    Name = "Kill All Mobs With Distance | 1.0"
+})
+-- ✅ Variables
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Player = Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local RootPart = Character:WaitForChild("HumanoidRootPart")
+
+-- إعدادات
+local settings = {
+    killAuraRadius = 100,
+}
+
+local features = {
+    killAura = false,
+}
+
+local KillAuraConnection = nil
+local LastAttackTime = {}
+
+local ValidTargets = {
+    ["Bunny"] = true,
+    ["Wolf"] = true,
+    ["Alpha Wolf"] = true,
+    ["Bear"] = true,
+    ["Cultist"] = true,
+    ["Crossbow Cultist"] = true,
+}
+
+-- فحص وجود الفأس
+local function hasAxe()
+    local Inventory = Player:FindFirstChild("Inventory")
+    if Inventory then
+        for _, item in pairs(Inventory:GetChildren()) do
+            if item:IsA("Model") then
+                if item.Name:find("Axe") or item:GetAttribute("ToolName") == "GenericAxe" then
+                    return true, item
+                end
+            end
+        end
+    end
+    if Player.Character then
+        for _, item in pairs(Player.Character:GetChildren()) do
+            if item:IsA("Tool") and item.Name:lower():find("axe") then
+                return true, item
+            end
+        end
+    end
+    return false, nil
+end
+
+-- Dummy ID function
+local function getEntityId(entity)
+    return "1130340392"
+end
+
+-- Toggle Kill Aura
+local function toggleKillAura(enabled)
+    features.killAura = enabled
+
+    if enabled then
+        local RemoteEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
+        if not RemoteEvents then return end
+        local ToolDamageObject = RemoteEvents:FindFirstChild("ToolDamageObject")
+        local DamagePlayer = RemoteEvents:FindFirstChild("DamagePlayer")
+
+        KillAuraConnection = RunService.Heartbeat:Connect(function()
+            if not features.killAura then return end
+            local char = Player.Character
+            if not char then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+
+            local hasAxeItem, axeTool = hasAxe()
+            if not hasAxeItem then return end
+
+            local charactersFolder = workspace:FindFirstChild("Characters")
+            if not charactersFolder then return end
+
+            local targets = {}
+            for _, obj in pairs(charactersFolder:GetChildren()) do
+                if obj:IsA("Model") and obj ~= char and ValidTargets[obj.Name] then
+                    local humanoid = obj:FindFirstChildOfClass("Humanoid")
+                    local rootPart = obj:FindFirstChild("HumanoidRootPart")
+                    if humanoid and rootPart and humanoid.Health > 0 then
+                        local dist = (root.Position - rootPart.Position).Magnitude
+                        if dist <= settings.killAuraRadius then
+                            table.insert(targets, {model = obj, humanoid = humanoid, rootPart = rootPart, dist = dist})
+                        end
+                    end
+                end
+            end
+
+            table.sort(targets, function(a,b) return a.dist < b.dist end)
+
+            for _, target in ipairs(targets) do
+                local now = tick()
+                local lastAttack = LastAttackTime[target.model] or 0
+                local cooldown = axeTool:GetAttribute("ToolCooldown") or 0.5
+
+                if now - lastAttack >= cooldown then
+                    LastAttackTime[target.model] = now
+                    local lookDir = (target.rootPart.Position - root.Position).Unit
+                    root.CFrame = CFrame.lookAt(root.Position, root.Position + lookDir * Vector3.new(1,0,1))
+
+                    if ToolDamageObject then
+                        pcall(function()
+                            ToolDamageObject:InvokeServer(target.model, axeTool, getEntityId(target), root.CFrame)
+                        end)
+                        pcall(function()
+                            ToolDamageObject:InvokeServer(target.model)
+                        end)
+                    end
+                    if DamagePlayer then
+                        pcall(function()
+                            DamagePlayer:FireServer(target.model, axeTool:GetAttribute("WeaponDamage") or 7)
+                        end)
+                    end
+                end
+            end
+        end)
+    else
+        if KillAuraConnection then
+            KillAuraConnection:Disconnect()
+            KillAuraConnection = nil
+        end
+    end
+end
+
+-- ✅ استبدال التوغل الحالي بالـ AddToggle
+Tab2:AddToggle({
+    Name = "Kill Aura",
+    Default = false,
+    Callback = function(state)
+        toggleKillAura(state)
+    end
+})
+
+-- ✅ السلايدر لتعديل مدى Kill Aura
+Tab2:AddSlider({
+    Name = "Kill Aura Distance",
+    Default = settings.killAuraRadius,
+    Min = 10,
+    Max = 2500,
+    Increment = 1,
+    Callback = function(value)
+        settings.killAuraRadius = value
+    end
+})
+Tab3:AddSection({
+    Name = "Farming With Tp To Wood | 1.0"
+})
+
+Tab3:AddToggle({
+    Name = "Auto Farm Wood",
+    Default = false,
+    Callback = function(state)
+        local autoFarmEnabled = state
+        local player = game.Players.LocalPlayer
+        local axeName = "Old Axe" -- Options: "Old Axe", "Good Axe", "Strong Axe", "Chainsaw"
+        local campfirePos = Vector3.new(0, 0, 0) -- ضع هنا إحداثيات Camp Fire
+
+        local axeHits = {
+            ["Old Axe"] = 13,
+            ["Good Axe"] = 5,
+            ["Strong Axe"] = 1,
+            ["Chainsaw"] = 2
+        }
+
+        local treeLevels = {
+            ["smalltree"] = 1,
+            ["mediumtree"] = 2,
+            ["bigtree"] = 3,
+            ["gianttree"] = 4
+        }
+
+        local axeLevels = {
+            ["Old Axe"] = 1,
+            ["Good Axe"] = 2,
+            ["Strong Axe"] = 3,
+            ["Chainsaw"] = 4
+        }
+
+        -- الحصول على الفأس
+        local function getAxe()
+            for _, tool in ipairs(player.Backpack:GetChildren()) do
+                if tool.Name == axeName then return tool end
+            end
+            for _, tool in ipairs(player.Character:GetChildren()) do
+                if tool.Name == axeName then return tool end
+            end
+            return nil
+        end
+
+        -- الانتقال للأرض أمام الشجرة أو النقطة المحددة
+        local function teleportToGround(pos)
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+            if hrp and humanoid then
+                local ray = Ray.new(pos + Vector3.new(0, 50, 0), Vector3.new(0, -100, 0))
+                local hitPos = workspace:FindPartOnRayWithIgnoreList(ray, {player.Character})
+                local groundY = hitPos and hitPos.Position.Y or pos.Y
+                local direction = (pos - hrp.Position).Unit
+                local newPos = Vector3.new(pos.X, groundY, pos.Z) - direction * 3
+                hrp.CFrame = CFrame.new(newPos, Vector3.new(pos.X, groundY, pos.Z))
+                humanoid.PlatformStand = false
+                humanoid.Sit = false
+            end
+        end
+
+        -- إيجاد أقرب شجرة مناسبة
+        local function getNearestTree()
+            local closestTree, minDist = nil, math.huge
+            if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return nil end
+            local playerPos = player.Character.HumanoidRootPart.Position
+            local maxTreeLevel = axeLevels[axeName] or 1
+
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj.Name:lower():find("tree") then
+                    local root = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
+                    if root then
+                        local treeName = obj.Name:lower()
+                        local level = treeLevels[treeName] or 1
+                        if level <= maxTreeLevel then
+                            local dist = (playerPos - root.Position).Magnitude
+                            if dist < minDist then
+                                minDist = dist
+                                closestTree = root
+                            end
+                        end
+                    end
+                end
+            end
+            return closestTree
+        end
+
+        -- قطع الشجرة
+        local function chopTree(treeRoot)
+            local axe = getAxe()
+            if not axe then warn("Axe not found!") return false end
+            if axe.Parent ~= player.Character then axe.Parent = player.Character end
+
+            teleportToGround(treeRoot.Position)
+
+            local hits = axeHits[axeName] or 5
+            for i = 1, hits do
+                if not autoFarmEnabled then return false end
+                firetouchinterest(axe.Handle, treeRoot, 0)
+                task.wait(0.2)
+                firetouchinterest(axe.Handle, treeRoot, 1)
+                task.wait(0.1)
+            end
+            return true
+        end
+
+        -- جمع الأخشاب
+        local function collectLogs(treeModel)
+            for _, obj in ipairs(treeModel:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") then
+                    obj:InputHoldBegin()
+                    task.wait(0.1)
+                    obj:InputHoldEnd()
+                end
+            end
+        end
+
+        -- تسليم الأخشاب للنار
+        local function deliverLogs()
+            teleportToGround(campfirePos)
+            task.wait(1)
+        end
+
+        -- تشغيل الحلقة الرئيسية للتوغل
+        task.spawn(function()
+            while autoFarmEnabled do
+                local tree = getNearestTree()
+                if tree then
+                    local treeModel = tree.Parent
+                    teleportToGround(tree.Position)
+                    task.wait(0.5)
+                    local done = chopTree(tree)
+                    if done then
+                        collectLogs(treeModel)
+                        deliverLogs()
+                    end
+                else
+                    task.wait(1)
+                end
+            end
+        end)
+    end
+})
+
+Tab3:AddSection({
+    Name = "Get Lost Childs | 1.0"
+})
+
+-- أسماء الأطفال
+local kids = {
+    "Lost Child",
+    "Lost Child2",
+    "Lost Child3",
+    "Lost Child4"
+}
+
+-- متغير لتخزين الطفل المختار
+local selectedKid = nil
+
+-- إنشاء Dropdown لاختيار الطفل
+Tab3:AddDropdown({
+    Name = "Select Kid",
+    Options = kids,
+    Default = "Select a Kid",
+    Callback = function(value)
+        selectedKid = value
+    end
+})
+
+-- دالة للانتقال للطفل
+local function tpToKid(kidName)
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = character:WaitForChild("HumanoidRootPart")
+
+    local closestCF = nil
+    local shortest = math.huge
+    local referencePos = hrp.Position
+
+    -- ابحث عن أقرب نسخة للطفل
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name == kidName and (obj:IsA("Model") or obj:IsA("BasePart")) then
+            local cf = nil
+            if obj:IsA("Model") then
+                local ok, pivot = pcall(function() return obj:GetPivot() end)
+                if ok and pivot then
+                    cf = pivot
+                else
+                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+                    if part then cf = part.CFrame end
+                end
+            elseif obj:IsA("BasePart") then
+                cf = obj.CFrame
+            end
+
+            if cf then
+                local dist = (cf.Position - referencePos).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    closestCF = cf
+                end
+            end
+        end
+    end
+
+    -- لو وجدنا الطفل ننقلك فوقه
+    if closestCF then
+        hrp.CFrame = closestCF + Vector3.new(0, 5, 0)
+    else
+        warn("Kid not found: " .. tostring(kidName))
+    end
+end
+
+-- زر للانتقال للطفل المختار
+Tab3:AddButton({
+    Name = "Tp To Kid",
+    Callback = function()
+        if selectedKid then
+            tpToKid(selectedKid)
+        else
+            warn("Please select a kid first!")
+        end
+    end
+})
+
+Tab3:AddSection({
+    Name = "Tp To All Chests | 1.0"
+})
+
+-- أسماء الـ Chests
+local chests = {
+    "Item Chest",
+    "Item Chest2",
+    "Item Chest3",
+    "Item Chest4",
+    "Item Chest5",
+    "Item Chest6"
+}
+
+-- متغير لتخزين الصندوق المختار
+local selectedChest = nil
+
+-- إنشاء Dropdown لاختيار الصندوق
+Tab3:AddDropdown({
+    Name = "Select Chest",
+    Options = chests,
+    Default = "Select a Chest",
+    Callback = function(value)
+        selectedChest = value
+    end
+})
+
+-- دالة للانتقال للصندوق المختار
+local function tpToChest(chestName)
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = character:WaitForChild("HumanoidRootPart")
+
+    local closestCF = nil
+    local shortest = math.huge
+    local referencePos = hrp.Position
+
+    -- ابحث عن أقرب نسخة للصندوق
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name == chestName and (obj:IsA("Model") or obj:IsA("BasePart")) then
+            local cf = nil
+            if obj:IsA("Model") then
+                local ok, pivot = pcall(function() return obj:GetPivot() end)
+                if ok and pivot then
+                    cf = pivot
+                else
+                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+                    if part then cf = part.CFrame end
+                end
+            elseif obj:IsA("BasePart") then
+                cf = obj.CFrame
+            end
+
+            if cf then
+                local dist = (cf.Position - referencePos).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    closestCF = cf
+                end
+            end
+        end
+    end
+
+    -- لو وجدنا الصندوق ننقلك فوقه
+    if closestCF then
+        hrp.CFrame = closestCF + Vector3.new(0, 5, 0)
+    else
+        warn("Chest not found: " .. tostring(chestName))
+    end
+end
+
+-- زر للانتقال للصندوق المختار
+Tab3:AddButton({
+    Name = "Tp To Chest",
+    Callback = function()
+        if selectedChest then
+            tpToChest(selectedChest)
+        else
+            warn("Please select a chest first!")
+        end
+    end
+})
+
+Tab3:AddSection({
+    Name = "Camp Fire | 1.0"
+})
+-- تعريف مكان النار (غير حسب موقعك)
+local campfirePos = Vector3.new(0, 0, 0) -- ضع هنا إحداثيات Camp Fire
+
+-- استخدام زر من الـ UI الخاص بك
+Tab3:AddButton({
+    Name = "Tp To Camp Fire",
+    Callback = function()
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local rootpart = character:WaitForChild("HumanoidRootPart")
+        
+        if rootpart then
+            rootpart.CFrame = CFrame.new(campfirePos + Vector3.new(0, 7, 0))
+            print("تم الانتقال إلى Camp Fire!")
+        else
+            warn("لم يتم العثور على HumanoidRootPart!")
+        end
+    end
+})
+
+
+-- إضافة Section للسرعة والقفز
+Tab4:AddSection({
+    Name = "Speed Boost & Jump Power"
+})
+
+-- سلايدر Speed Boost
+Tab4:AddSlider({
+    Name = "Speed Boost",
+    Min = 16,
+    Max = 150,
+    Default = 16,
+    Callback = function(value)
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = value
+        end
+    end
+})
+
+-- إعادة السرعة الافتراضية عند دخول اللعبة أو إعادة الشخصية
+game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid.WalkSpeed = 16
+end)
+
+-- سلايدر Jump Power
+Tab4:AddSlider({
+    Name = "Jump Power",
+    Min = 50,
+    Max = 150,
+    Default = 50,
+    Callback = function(value)
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.JumpPower = value
+            humanoid.UseJumpPower = true
+        end
+    end
+})
+
+-- إعادة Jump Power الافتراضية عند دخول اللعبة أو إعادة الشخصية
+game.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid.JumpPower = 50
+    humanoid.UseJumpPower = true
+end)
+
+-- إضافة Section للقفز اللامتناهي والطيران
+Tab4:AddSection({
+    Name = "Infinite Jump & Fly"
+})
+
+-- Toggle Infinite Jump
+Tab4:AddToggle({
+    Name = "Infinite Jump",
+    Default = false,
+    Callback = function(state)
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local jumping = state
+        local connection
+
+        if state then
+            connection = game:GetService("UserInputService").JumpRequest:Connect(function()
+                if jumping and humanoid then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            end)
+        else
+            if connection then
+                connection:Disconnect()
+                connection = nil
+            end
+        end
+
+        player.CharacterAdded:Connect(function(char)
+            character = char
+            humanoid = char:WaitForChild("Humanoid")
+        end)
+    end
+})
+
+-- زر Fly Script
+Tab4:AddButton({
+    Name = "Fly Script",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Xeno9995/XENOLIB/refs/heads/main/XENO%20HUB%20FLY%20GUI%20SCRIPT"))()
+        print("Hello!")
+    end
+})
+
+-- الخدمات
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local character
+local humanoidRootPart
+local inventory = player:WaitForChild("Inventory")
+
+-- اكتشاف الشخصية
+local function onCharacterAdded(char)
+    character = char
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+end
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+-- الكشف عن الساك
+local sack = nil
+local function findSack()
+    for _, item in pairs(inventory:GetChildren()) do
+        if string.find(item.Name, "Sack") then
+            return item
+        end
+    end
+    return nil
+end
+sack = findSack()
+inventory.ChildAdded:Connect(function(child)
+    if string.find(child.Name, "Sack") then
+        sack = child
+    end
+end)
+inventory.ChildRemoved:Connect(function(child)
+    if sack and child == sack then
+        sack = findSack()
+    end
+end)
+
+-- مجلدات الـ Workspace
+local itemsFolder = workspace:FindFirstChild("Items")
+local characters = workspace:FindFirstChild("Characters")
+
+-- التحقق من امتلاء الساك
+local function isSackFull()
+    if not sack then return true end
+    local current = sack:GetAttribute("NumberItems")
+    local capacity = sack:GetAttribute("Capacity")
+    return current ~= nil and capacity ~= nil and current >= capacity
+end
+
+-- تخزين العنصر داخل الساك
+local function store(item)
+    if not sack then return end
+    local part = item:FindFirstChildWhichIsA("BasePart")
+    if part then
+        humanoidRootPart.CFrame = part.CFrame
+        task.wait(0.2)
+        ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestBagStoreItem"):InvokeServer(sack, item)
+        task.wait(0.2)
+    end
+end
+
+-- لوب لجلب العناصر
+local function bringItems(itemTypes)
+    if not humanoidRootPart then return end
+    local all = {}
+    for _, obj in pairs(itemsFolder:GetChildren()) do table.insert(all, obj) end
+    for _, obj in pairs(characters:GetChildren()) do table.insert(all, obj) end
+
+    for _, item in pairs(all) do
+        if isSackFull() then break end
+        local itemName = item.Name
+        for _, typeName in pairs(itemTypes) do
+            if typeName ~= "All" and string.find(itemName, typeName) or typeName == "All" then
+                store(item)
+                break
+            end
+        end
+    end
+end
+
+-- لوب للـ Tp
+local function tpToItems(itemTypes)
+    if not humanoidRootPart then return end
+    local all = {}
+    for _, obj in pairs(itemsFolder:GetChildren()) do table.insert(all, obj) end
+    for _, obj in pairs(characters:GetChildren()) do table.insert(all, obj) end
+
+    for _, item in pairs(all) do
+        local itemName = item.Name
+        for _, typeName in pairs(itemTypes) do
+            if typeName ~= "All" and string.find(itemName, typeName) or typeName == "All" then
+                local part = item:FindFirstChildWhichIsA("BasePart")
+                if part then
+                    humanoidRootPart.CFrame = part.CFrame
+                    task.wait(0.3)
+                end
+                break
+            end
+        end
+    end
+end
+
+-- دالة لإعداد قسم كامل لكل نوع
+local function setupBringSection(sectionName, itemList)
+    local selectedType = "All"
+    Tab5:AddSection(sectionName)
+
+    Tab5:AddDropdown({
+        Name = "Select " .. sectionName,
+        Options = itemList,
+        Default = "All",
+        Callback = function(sel)
+            selectedType = sel
+        end
+    })
+
+    local bringToggleActive = false
+    local tpToggleActive = false
+
+    Tab5:AddToggle({
+        Name = "Bring " .. sectionName,
+        Default = false,
+        Callback = function(state)
+            bringToggleActive = state
+            if state then
+                task.spawn(function()
+                    while bringToggleActive do
+                        bringItems({selectedType})
+                        task.wait(1)
+                    end
+                end)
+            end
+        end
+    })
+
+    Tab5:AddToggle({
+        Name = "Tp To " .. sectionName,
+        Default = false,
+        Callback = function(state)
+            tpToggleActive = state
+            if state then
+                task.spawn(function()
+                    while tpToggleActive do
+                        tpToItems({selectedType})
+                        task.wait(1)
+                    end
+                end)
+            end
+        end
+    })
+end
+
+-- إعداد جميع الأقسام
+setupBringSection("Fuels", {"Coal", "Oil Barrel", "Fuel Canister", "Chair", "Cultist", "Crossbow Cultist", "All"})
+setupBringSection("Weapons", {"Revolver Ammo", "Rifle Ammo", "Revolver", "Rifle", "Spear", "Leather Body", "Iron Body", "Thorn Body", "All"})
+setupBringSection("Food", {"Morsel", "Steak", "Ribs", "Meat? Sandwich", "All"})
+setupBringSection("Leather", {"Bear Pelt", "Wolf Pelt", "Alpha Wolf Pelt", "Bunny Foot", "All"})
+setupBringSection("Wood", {"Log", "Sapling", "All"})
+setupBringSection("Axes", {"Good Axe", "Strong Axe", "Chainsaw", "All"})
+setupBringSection("Sacks", {"Good Sack", "Giant Sack", "All"})
+
+Tab6:AddSection({
+    Name = "ESP Mobs | 1.0"
+})
+-- جدول تخزين الـ ESPs
+local ESP_OBJECTS = {}
+
+-- دالة عمل ESP
+local function makeESP(obj, typ)
+    local adornee = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
+    if not adornee then return end
+
+    -- إذا كان ESP موجود مسبقًا لهذا العنصر، لا نعيده
+    if ESP_OBJECTS[obj] and ESP_OBJECTS[obj][typ] then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.FillTransparency = 1
+    highlight.OutlineColor = Color3.new(1, 0, 0)
+    highlight.Adornee = obj
+    highlight.Parent = obj
+
+    local billboard = Instance.new("BillboardGui", obj)
+    billboard.Adornee = adornee
+    billboard.Size = UDim2.new(0, 100, 0, 50)
+    billboard.AlwaysOnTop = true
+
+    local textLabel = Instance.new("TextLabel", billboard)
+    textLabel.Size = UDim2.new(1, 0, 0, 20)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.TextSize = 14
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.Text = typ
+
+    local healthLabel
+    if typ ~= "Kids" then
+        healthLabel = Instance.new("TextLabel", billboard)
+        healthLabel.Size = UDim2.new(1, 0, 0, 20)
+        healthLabel.Position = UDim2.new(0, 0, 0, 20)
+        healthLabel.BackgroundTransparency = 1
+        healthLabel.Font = Enum.Font.SourceSansBold
+        healthLabel.TextSize = 14
+        healthLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+        healthLabel.Text = "HP"
+    end
+
+    -- تخزين ESP لكل نوع على العنصر
+    ESP_OBJECTS[obj] = ESP_OBJECTS[obj] or {}
+    ESP_OBJECTS[obj][typ] = {highlight = highlight, label = textLabel, health = healthLabel, obj = obj}
+
+    task.spawn(function()
+        while ESP_OBJECTS[obj] and ESP_OBJECTS[obj][typ] do
+            for i = 0, 255 do
+                if highlight then highlight.OutlineColor = Color3.fromHSV(i / 255, 1, 1) end
+                if textLabel then textLabel.TextColor3 = Color3.fromHSV(i / 255, 1, 1) end
+                if healthLabel then
+                    healthLabel.TextColor3 = Color3.fromHSV(i / 255, 1, 1)
+                    local hum = obj:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        healthLabel.Text = "HP: " .. math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth)
+                    end
+                end
+                task.wait(0.03)
+            end
+        end
+    end)
+end
+
+-- دالة إزالة ESP لنوع معين
+local function removeESPType(typ)
+    for obj, types in pairs(ESP_OBJECTS) do
+        if types[typ] then
+            if types[typ].highlight then types[typ].highlight:Destroy() end
+            if types[typ].label and types[typ].label.Parent then types[typ].label.Parent:Destroy() end
+            types[typ] = nil
+        end
+        if next(types) == nil then
+            ESP_OBJECTS[obj] = nil
+        end
+    end
+end
+
+-- دالة لتفعيل ESP لكل العناصر حسب الاسم
+local function activateESPByName(name, displayName)
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name:lower():match(name:lower()) then
+            makeESP(obj, displayName)
+        end
+    end
+end
+
+-- 🟢 Toggles لكل نوع ESP
+local espTypes = {
+    {Name = "ESP Bunny", Search = "bunny", Display = "Bunny"},
+    {Name = "ESP Wolf", Search = "wolf", Display = "Wolf"},
+    {Name = "ESP Alpha Wolf", Search = "alpha wolf", Display = "Alpha Wolf"},
+    {Name = "ESP Bear", Search = "bear", Display = "Bear"},
+    {Name = "ESP Kids", Search = "kid", Display = "Kid"},
+    {Name = "ESP Cultist", Search = "cultist", Display = "Cultist"},
+    {Name = "ESP Crossbow Cultist", Search = "cross", Display = "Crossbow Cultist"}
+}
+
+for _, esp in pairs(espTypes) do
+    Tab6:AddToggle({
+        Name = esp.Name,
+        Default = false,
+        Callback = function(state)
+            if state then
+                activateESPByName(esp.Search, esp.Display)
+            else
+                removeESPType(esp.Display)
+            end
+        end
+    })
+end
+
+Tab7:AddSection({
+    Name = "Hitbox Mobs | 1.0"
+})
+
+-- إعدادات Hitbox
+local hitboxSettings = {
+    Wolf = false,
+    AlphaWolf = false,
+    Bunny = false,
+    Cultist = false,
+    CrossbowCultist = false,
+    Bear = false,
+    Mammoth = false,
+    Show = false,
+    Size = 15
+}
+
+-- دالة تحديث الهت بوكس لموديل معين
+local function updateHitboxForModel(model)
+    local root = model:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local name = model.Name:lower()
+
+    local shouldResize =
+        (hitboxSettings.Wolf and name:find("wolf") and not name:find("alpha")) or
+        (hitboxSettings.AlphaWolf and name:find("alpha") and name:find("wolf")) or
+        (hitboxSettings.Bunny and name:find("bunny")) or
+        (hitboxSettings.Cultist and name:find("cultist") and not name:find("cross")) or
+        (hitboxSettings.CrossbowCultist and name:find("cross") and name:find("cultist")) or
+        (hitboxSettings.Bear and name:find("bear")) or
+        (hitboxSettings.Mammoth and name:find("mammoth"))
+
+    if shouldResize then
+        root.Size = Vector3.new(hitboxSettings.Size, hitboxSettings.Size, hitboxSettings.Size)
+        root.Transparency = hitboxSettings.Show and 0.5 or 1
+        root.Color = Color3.fromRGB(255, 255, 255)
+        root.Material = Enum.Material.Neon
+        root.CanCollide = false
+    end
+end
+
+-- لوب لتحديث جميع الموديلات باستمرار
+local hitboxLoopActive = false
+task.spawn(function()
+    while true do
+        if hitboxLoopActive then
+            for _, model in ipairs(workspace:GetDescendants()) do
+                if model:IsA("Model") and model:FindFirstChild("HumanoidRootPart") then
+                    updateHitboxForModel(model)
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- 🟢 Hitbox Toggles
+local function createHitboxToggle(name, settingKey)
+    Tab7:AddToggle({
+        Name = name,
+        Default = false,
+        Callback = function(val)
+            hitboxSettings[settingKey] = val
+            -- تشغيل/ايقاف لوب الهتبوكس تلقائياً
+            hitboxLoopActive = false
+            for k, v in pairs(hitboxSettings) do
+                if type(v) == "boolean" and v then
+                    hitboxLoopActive = true
+                    break
+                end
+            end
+        end
+    })
+end
+
+createHitboxToggle("Wolf Hitbox", "Wolf")
+createHitboxToggle("Alpha Wolf Hitbox", "AlphaWolf")
+createHitboxToggle("Bunny Hitbox", "Bunny")
+createHitboxToggle("Cultist Hitbox", "Cultist")
+createHitboxToggle("Crossbow Cultist Hitbox", "CrossbowCultist")
+createHitboxToggle("Bear Hitbox", "Bear")
+createHitboxToggle("Mammoth Hitbox", "Mammoth")
+
+-- 🟢 Slider لحجم الهتبوكس
+Tab7:AddSlider({
+    Name = "Hitbox Size",
+    Min = 15,
+    Max = 60,
+    Default = hitboxSettings.Size,
+    Callback = function(val)
+        hitboxSettings.Size = val
+    end
+})
+
+-- 🟢 Toggle لإظهار الشفافية
+Tab7:AddToggle({
+    Name = "Show Hitbox (Transparency)",
+    Default = false,
+    Callback = function(val)
+        hitboxSettings.Show = val
+    end
+})
